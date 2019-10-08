@@ -83,7 +83,7 @@ static void rcp_espnow_recv_cb(const uint8_t *mac_addr, const uint8_t *data,
     return;
   }
 
-  printf("received %d bytes of data: %02x\n", len, data[0]);
+  printf("received %d bytes of data: %02x %02x\n", len, data[0], data[1]);
   // TODO verify the mac_addr
 
   rcp_cmd_t *rcp_cmd = (rcp_cmd_t *)data;
@@ -91,11 +91,26 @@ static void rcp_espnow_recv_cb(const uint8_t *mac_addr, const uint8_t *data,
   _rcp_recv_cb(rcp_cmd);
 }
 
-void rcp_master_init(const uint8_t *peer_addr) {
+static rcp_send_cb_t _rcp_send_cb = NULL;
+
+static void rcp_espnow_send_cb(const uint8_t *mac_addr,
+                               esp_now_send_status_t status) {
+  if (mac_addr == NULL) {
+    ESP_LOGE(TAG, "invalid send cb arg");
+    return;
+  }
+
+  ESP_LOGI(TAG, "send_cb status: %d", status);
+
+  _rcp_send_cb(status);
+}
+
+void rcp_master_init(const uint8_t *peer_addr, rcp_send_cb_t send_cb) {
   _peer_addr = peer_addr;
+  _rcp_send_cb = send_cb;
 
   wifi_init();
-  espnow_init(peer_addr, NULL, NULL);
+  espnow_init(peer_addr, rcp_espnow_send_cb, NULL);
 }
 
 void rcp_slave_init(const uint8_t *peer_addr, rcp_recv_cb_t recv_cb) {
