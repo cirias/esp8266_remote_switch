@@ -11,6 +11,9 @@
 //
 // Board 02
 // mac: 5c:cf:7f:b7:22:58
+//
+// ESP01M
+// mac: d8:f1:5b:b9:9f:7e
 
 #include <stdio.h>
 

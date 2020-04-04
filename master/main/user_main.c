@@ -11,6 +11,9 @@
 //
 // Board 02
 // mac: 5c:cf:7f:b7:22:58
+//
+// ESP01M
+// mac: d8:f1:5b:b9:9f:7e
 
 #include <stdio.h>
 
@@ -18,6 +21,7 @@
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "freertos/timers.h"
 
 #include "driver/uart.h"
 
@@ -36,8 +40,13 @@ typedef struct {
 } message_t;
 
 static const char *TAG = "remote_switch_master";
-static uint8_t peer_mac[ESP_NOW_ETH_ALEN] = {0x5c, 0xcf, 0x7f,
-                                             0xb7, 0x22, 0x58};
+/*
+ * static uint8_t peer_mac[ESP_NOW_ETH_ALEN] = {0x5c, 0xcf, 0x7f,
+ *                                              0xb7, 0x22, 0x58};
+ */
+static uint8_t peer_mac[ESP_NOW_ETH_ALEN] = {0xd8, 0xf1, 0x5b, 0xb9, 0x9f, 0x7e};
+
+static uint8_t my_mac[ESP_NOW_ETH_ALEN] = {0, 0, 0, 0, 0, 0};
 
 static QueueHandle_t uart0_queue;
 
@@ -45,6 +54,7 @@ static TaskHandle_t rcp_send_task_handle = NULL;
 static SemaphoreHandle_t command_semaphore = NULL;
 static message_t current_message = {.index = 0, .op = OP_NO};
 static QueueHandle_t rcp_cmd_send_callback_queue = NULL;
+static TimerHandle_t stop_sending_timer = NULL;
 
 static void uart_event_task(void *pvParameters) {
   uart_event_t event;
@@ -98,6 +108,10 @@ static void uart_event_task(void *pvParameters) {
             break;
           }
 
+          if (xTimerReset(stop_sending_timer, portMAX_DELAY) != pdPASS) {
+            ESP_LOGE(TAG, "could not reset stop_sending_timer");
+            break;
+          }
           vTaskResume(rcp_send_task_handle);
 
           ESP_LOGI(TAG, "[DATA EVT]:");
@@ -171,10 +185,10 @@ static void rcp_send_task(void *pvParameters) {
     if (cmd.op0 == OP_NO && cmd.op1 == OP_NO) {
       ESP_LOGI(TAG, "ignore empty command");
       vTaskSuspend(NULL);
+      continue;
     }
 
     rcp_send(&cmd);
-
     if (xQueueReceive(rcp_cmd_send_callback_queue, &send_status,
                       portMAX_DELAY) != pdTRUE) {
       ESP_LOGE(TAG, "could not get rcp send callback");
@@ -182,7 +196,7 @@ static void rcp_send_task(void *pvParameters) {
     }
 
     if (send_status == ESP_NOW_SEND_FAIL) {
-      vTaskDelay(200 / portTICK_PERIOD_MS);
+      /* vTaskDelay(200 / portTICK_PERIOD_MS); */
       continue;
     }
 
@@ -201,8 +215,14 @@ static void rcp_cmd_send_cb(esp_now_send_status_t status) {
   }
 }
 
+void stop_sending_timer_callback(TimerHandle_t xTimer) {
+  vTaskSuspend(rcp_send_task_handle);
+}
+
 void app_main(void) {
   printf("SDK version: %s\n", esp_get_idf_version());
+  ESP_ERROR_CHECK(esp_read_mac(my_mac, 0));
+  printf("MAC Address: %x:%x:%x:%x:%x:%x\n", my_mac[0], my_mac[1], my_mac[2], my_mac[3], my_mac[4], my_mac[5]);
 
   // configure rcp
   rcp_master_init(peer_mac, rcp_cmd_send_cb);
@@ -218,11 +238,14 @@ void app_main(void) {
   ESP_ERROR_CHECK(uart_param_config(EX_UART_NUM, &uart_config));
 
   /* Install UART driver for interrupt-driven reads and writes */
-  ESP_ERROR_CHECK(uart_driver_install(EX_UART_NUM, 256, 256, 20, &uart0_queue));
+  ESP_ERROR_CHECK(uart_driver_install(EX_UART_NUM, 256, 256, 20, &uart0_queue, 0));
 
   command_semaphore = xSemaphoreCreateMutex();
 
   rcp_cmd_send_callback_queue = xQueueCreate(1, sizeof(esp_now_send_status_t));
+
+  stop_sending_timer = xTimerCreate(
+      "stop_sending_timer", pdMS_TO_TICKS(30000), pdFALSE, NULL, stop_sending_timer_callback);
 
   // Create a task to handler UART event from ISR
   xTaskCreate(uart_event_task, "uart_event_task", 1024, NULL, 12, NULL);

@@ -8,9 +8,15 @@ RUN cd /tmp && \
   tar xzf xtensa-lx106-elf-linux64-1.22.0-100-ge567ec7-5.2.0.tar.gz -C /opt
 ENV PATH $PATH:/opt/xtensa-lx106-elf/bin
 
-RUN git clone https://github.com/espressif/ESP8266_RTOS_SDK.git /third_party/ESP8266_RTOS_SDK && \
-  cd /third_party/ESP8266_RTOS_SDK && \
-  git checkout release/v3.3
-RUN python -m pip install -r /third_party/ESP8266_RTOS_SDK/requirements.txt
-
 ENV IDF_PATH /third_party/ESP8266_RTOS_SDK
+
+RUN git clone https://github.com/espressif/ESP8266_RTOS_SDK.git $IDF_PATH && \
+  cd $IDF_PATH && \
+  git checkout release/v3.3
+RUN python -m pip install -r $IDF_PATH/requirements.txt
+
+RUN cd /tmp && \
+  cp -r $IDF_PATH/examples/get-started/hello_world . && \
+  cd hello_world && \
+  make defconfig && \
+  make
